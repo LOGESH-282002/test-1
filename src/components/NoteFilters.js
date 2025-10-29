@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDebounce } from '@/hooks/useDebounce'
 import { Search, Filter, X, Tag, Folder, Calendar, ArrowUpDown, Eye, Lock } from 'lucide-react'
@@ -19,6 +19,11 @@ export default function NoteFilters({ onFiltersChange, activeFilters = {}, onSor
 
   // Debounce search query for better performance
   const debouncedSearchQuery = useDebounce(searchQuery, 300)
+  
+  // Refs to prevent duplicate API calls
+  const categoriesFetchedRef = useRef(false)
+  const labelsFetchedRef = useRef(false)
+  const abortControllerRef = useRef(null)
 
   const SORT_OPTIONS = [
     { key: 'updated_desc', label: 'Last Updated (Newest)' },
@@ -29,13 +34,29 @@ export default function NoteFilters({ onFiltersChange, activeFilters = {}, onSor
     { key: 'title_desc', label: 'Title (Z-A)' }
   ]
 
+  // Fetch categories and labels only once when token is available
   useEffect(() => {
-    if (token) {
+    if (token && !categoriesFetchedRef.current) {
       fetchCategories()
+      categoriesFetchedRef.current = true
+    }
+    if (token && !labelsFetchedRef.current) {
       fetchLabels()
+      labelsFetchedRef.current = true
     }
   }, [token])
 
+  // Reset fetch flags when token changes
+  useEffect(() => {
+    if (!token) {
+      categoriesFetchedRef.current = false
+      labelsFetchedRef.current = false
+      setCategories([])
+      setLabels([])
+    }
+  }, [token])
+
+  // Update filters with stable callback
   useEffect(() => {
     const filters = {
       search: debouncedSearchQuery,
@@ -46,35 +67,66 @@ export default function NoteFilters({ onFiltersChange, activeFilters = {}, onSor
       encryption: encryptionFilter
     }
     onFiltersChange(filters)
-  }, [debouncedSearchQuery, selectedCategory, selectedLabels, dateFilter, visibilityFilter, encryptionFilter, onFiltersChange])
+  }, [debouncedSearchQuery, selectedCategory, selectedLabels, dateFilter, visibilityFilter, encryptionFilter]) // Removed onFiltersChange
 
-  const fetchCategories = async () => {
+  const fetchCategories = useCallback(async () => {
+    if (!token) return
+    
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+
     try {
       const response = await fetch('/api/categories', {
         headers: { 'Authorization': `Bearer ${token}` },
+        signal: abortControllerRef.current.signal
       })
       const data = await response.json()
       if (response.ok) {
         setCategories(data.categories)
       }
     } catch (error) {
-      console.error('Failed to fetch categories:', error)
+      if (error.name !== 'AbortError') {
+        console.error('Failed to fetch categories:', error)
+      }
     }
-  }
+  }, [token])
 
-  const fetchLabels = async () => {
+  const fetchLabels = useCallback(async () => {
+    if (!token) return
+    
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+
     try {
       const response = await fetch('/api/labels', {
         headers: { 'Authorization': `Bearer ${token}` },
+        signal: abortControllerRef.current.signal
       })
       const data = await response.json()
       if (response.ok) {
         setLabels(data.labels)
       }
     } catch (error) {
-      console.error('Failed to fetch labels:', error)
+      if (error.name !== 'AbortError') {
+        console.error('Failed to fetch labels:', error)
+      }
     }
-  }
+  }, [token])
+
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
 
   const toggleLabel = (labelId) => {
     setSelectedLabels(prev =>

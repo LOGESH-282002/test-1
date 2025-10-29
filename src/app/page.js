@@ -1,18 +1,18 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import NoteCard from '@/components/NoteCard'
 import NoteFilters from '@/components/NoteFilters'
-import NoteSorting, { sortNotes } from '@/components/NoteSorting'
+import NoteSorting from '@/components/NoteSorting'
 import QuickSort from '@/components/QuickSort'
 import Logo from '@/components/Logo'
-import { PenTool, Sparkles, TrendingUp, Users, StickyNote, Plus, Lock, Globe, Loader2 } from 'lucide-react'
+import { PenTool, Sparkles, StickyNote, Plus, Lock, Globe, Loader2 } from 'lucide-react'
 
 export default function HomePage() {
-  const { token, user } = useAuth()
+  const { token } = useAuth()
   const [notes, setNotes] = useState([])
   const [loading, setLoading] = useState(true)
   const [showDrafts, setShowDrafts] = useState(true)
@@ -36,20 +36,42 @@ export default function HomePage() {
     return 'updated_desc'
   })
 
+  // Add refs to prevent infinite loops
+  const abortControllerRef = useRef(null)
+  const lastRequestRef = useRef('')
+
+  // Memoize filters to prevent unnecessary re-renders
+  const memoizedFilters = useMemo(() => ({
+    search: filters.search,
+    category: filters.category,
+    labels: filters.labels,
+    dateFilter: filters.dateFilter,
+    visibility: filters.visibility,
+    encryption: filters.encryption
+  }), [
+    filters.search,
+    filters.category,
+    filters.labels,
+    filters.dateFilter,
+    filters.visibility,
+    filters.encryption
+  ])
+
+  // Stable effect with proper dependencies
   useEffect(() => {
     if (token) {
       resetAndFetchNotes()
     } else {
       setLoading(false)
     }
-  }, [token, showDrafts, sortBy, filters])
+  }, [token, showDrafts, sortBy, memoizedFilters])
 
   const resetAndFetchNotes = useCallback(async () => {
     setLoading(true)
     setNotes([])
     setPagination({ page: 1, hasMore: true, total: 0 })
     await fetchNotes(1, true)
-  }, [showDrafts, sortBy, filters])
+  }, [showDrafts, sortBy, memoizedFilters])
 
   const fetchMoreNotes = useCallback(async () => {
     if (!pagination.hasMore || loading) return
@@ -57,7 +79,17 @@ export default function HomePage() {
   }, [pagination.hasMore, pagination.page, loading])
 
   const handleFiltersChange = useCallback((newFilters) => {
-    setFilters(newFilters)
+    setFilters(prev => {
+      // Only update if filters actually changed
+      const hasChanged = Object.keys(newFilters).some(key => {
+        if (Array.isArray(newFilters[key])) {
+          return JSON.stringify(prev[key]) !== JSON.stringify(newFilters[key])
+        }
+        return prev[key] !== newFilters[key]
+      })
+      
+      return hasChanged ? newFilters : prev
+    })
   }, [])
 
   const handleSortChange = useCallback((newSort) => {
@@ -67,25 +99,58 @@ export default function HomePage() {
     }
   }, [])
 
-  const fetchNotes = async (page = 1, reset = false) => {
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
+
+  const fetchNotes = useCallback(async (page = 1, reset = false) => {
+    if (!token) return
+
+    // Create request identifier to prevent duplicate calls
+    const requestId = JSON.stringify({
+      page,
+      reset,
+      showDrafts,
+      sortBy,
+      filters: memoizedFilters
+    })
+
+    // Skip if this is a duplicate request
+    if (requestId === lastRequestRef.current) {
+      return
+    }
+    lastRequestRef.current = requestId
+
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+
     try {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: '20',
         drafts: showDrafts.toString(),
         sort: sortBy,
-        ...(filters.search && { search: filters.search }),
-        ...(filters.category && { category: filters.category }),
-        ...(filters.labels.length > 0 && { labels: filters.labels.join(',') }),
-        ...(filters.dateFilter !== 'all' && { date: filters.dateFilter }),
-        ...(filters.visibility !== 'all' && { visibility: filters.visibility }),
-        ...(filters.encryption !== 'all' && { encryption: filters.encryption })
+        ...(memoizedFilters.search && { search: memoizedFilters.search }),
+        ...(memoizedFilters.category && { category: memoizedFilters.category }),
+        ...(memoizedFilters.labels.length > 0 && { labels: memoizedFilters.labels.join(',') }),
+        ...(memoizedFilters.dateFilter !== 'all' && { date: memoizedFilters.dateFilter }),
+        ...(memoizedFilters.visibility !== 'all' && { visibility: memoizedFilters.visibility }),
+        ...(memoizedFilters.encryption !== 'all' && { encryption: memoizedFilters.encryption })
       })
 
       const response = await fetch(`/api/notes?${params}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
+        signal: abortControllerRef.current.signal
       })
       const data = await response.json()
 
@@ -105,11 +170,14 @@ export default function HomePage() {
         total: data.pagination.total
       })
     } catch (error) {
-      toast.error(error.message)
+      if (error.name !== 'AbortError') {
+        console.error('Fetch notes error:', error)
+        toast.error(error.message)
+      }
     } finally {
       setLoading(false)
     }
-  }
+  }, [token, showDrafts, sortBy, memoizedFilters])
 
   const handleDeleteNote = async (noteId) => {
     if (!token) {

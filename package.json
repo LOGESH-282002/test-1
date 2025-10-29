@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "validate-env": "node scripts/validate-env.js",
+    "prebuild": "npm run validate-env"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
@@ -18,11 +20,11 @@
     "clsx": "^2.0.0",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.294.0",
-    "next": "^14.0.0",
+    "next": "^16.0.1",
     "next-auth": "^4.24.11",
     "postcss": "^8.4.32",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "react-hook-form": "^7.48.2",
     "react-hot-toast": "^2.4.1",
     "tailwindcss": "^3.3.6"
@@ -33,7 +35,7 @@
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^14.5.1",
     "eslint": "^8",
-    "eslint-config-next": "^14.0.0",
+    "eslint-config-next": "^16.0.1",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0"
   }
